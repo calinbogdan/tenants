@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	_ "github.com/jackc/pgx/v4/stdlib"
 	"log"
 	"net/http"
+	"os"
 )
 
 func GetTenantsHandler(w http.ResponseWriter, r *http.Request) {
@@ -30,8 +32,6 @@ func GetTenantsHandler(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-
-
 func PostTenantHandler(w http.ResponseWriter, r *http.Request) {
 	var tenantMember CreateTenantRequestBody
 	err := json.NewDecoder(r.Body).Decode(&tenantMember)
@@ -45,11 +45,9 @@ func PostTenantHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
-const tenantsServerUrl = "port=5432 host=localhost user=postgres password=postgres"
-const tenantsUrl = "port=5432 host=localhost user=postgres password=postgres dbname=tenants"
-
 func main() {
-	server := NewTenantServer(NewPostgresTenantStore(tenantsUrl, tenantsServerUrl))
+	server := NewTenantServer(NewPostgresTenantStore(os.Getenv("TENANTS_URL"), os.Getenv("TENANTS_SERVER_URL")))
 
+	fmt.Printf("TenantsUrl: %s", os.Getenv("TENANTS_URL"))
 	http.ListenAndServe(":5000", server)
 }
