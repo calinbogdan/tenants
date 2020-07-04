@@ -10,15 +10,15 @@ const getTenantsQuery = `SELECT Id, database_id FROM tenant
 	INNER JOIN tenant_member tm on tenant.Id = tm.tenant_id 
 	WHERE tm.user_id = $1`
 
-const insertTenants = `INSERT INTO tenant (database_id) VALUES ($1) RETURNING id`
+const insertTenants = `INSERT INTO tenant (database_id) VALUES ($1) RETURNING *`
 
 const insertTenantMember = `INSERT INTO tenant_member (tenant_id, user_id) VALUES ($1, $2)`
 
-const createDatabase = `CREATE DATABASE "%s"`
+const createDatabase = `CREATE DATABASE "%s" WITH TEMPLATE template_tenantdb`
 
 type PostgresTenantStore struct {
-	tenantsUrl string
-	tenantsServerUrl  string
+	tenantsUrl       string
+	tenantsServerUrl string
 }
 
 func NewPostgresTenantStore(tenantsUrl, tenantsServerUrl string) *PostgresTenantStore {
@@ -53,52 +53,58 @@ func (p *PostgresTenantStore) GetTenantsForUser(userId string) (tenants []Tenant
 }
 
 func (p *PostgresTenantStore) CreateTenant(tenantId string, userId string) (*Tenant, error) {
+	// tenants table connection
 	tenantsConnection, err := p.initTenantsConnection()
 	if err != nil {
 		log.Fatal(err.Error())
 		return nil, err
 	}
+	defer tenantsConnection.Close()
 
+	// tenants multi-tenant databases server connection
 	tenantsServerConnection, err := p.initTenantsDatabaseServerConnection()
 	if err != nil {
 		log.Fatal(err.Error())
 		return nil, err
 	}
+	defer tenantsServerConnection.Close()
 
-	tenantsConnectionTransaction, err := tenantsConnection.Begin()
+	// transaction to create a tenant
+	createTenantTransaction, err := tenantsConnection.Begin()
 	if err != nil {
 		log.Fatal(err.Error())
 		return nil, err
 	}
 
 	// insert in tenant
-	var newTenantId int
-	err = tenantsConnectionTransaction.QueryRow(insertTenants, tenantId).Scan(&newTenantId)
+	newTenant := new(Tenant)
+	err = createTenantTransaction.QueryRow(insertTenants, tenantId).Scan(&newTenant.Id, &newTenant.DatabaseId)
 	if err != nil {
 		log.Fatalf("Insert tenant ERROR: %s", err.Error())
 		return nil, err
 	}
 
 	// insert in tenant_member
-	_, err = tenantsConnectionTransaction.Exec(insertTenantMember, newTenantId, userId)
+	_, err = createTenantTransaction.Exec(insertTenantMember, newTenant.Id, userId)
 	if err != nil {
 		log.Fatalf("Insert team member ERROR: %s", err.Error())
 		return nil, err
 	}
 
-	// create database
+	// prepare command and transaction to create database
 	createDatabaseQuery := fmt.Sprintf(createDatabase, tenantId)
-	result, err := tenantsServerConnection.Exec(createDatabaseQuery)
+
+	// create database
+	_, err = tenantsServerConnection.Exec(createDatabaseQuery)
 	if err != nil {
-		log.Print(result)
-		tenantsConnectionTransaction.Rollback()
+		createTenantTransaction.Rollback()
 		log.Fatalf("Transaction rolled back, ERROR: %s", err.Error())
 		return nil, err
 	}
-	tenantsConnectionTransaction.Commit()
-	log.Print("Transaction committed")
 
-	return nil, nil
+	createTenantTransaction.Commit()
+	log.Print("Transaction committed")
+	return newTenant, nil
 }
 
 func (p *PostgresTenantStore) initTenantsConnection() (*sql.DB, error) {
