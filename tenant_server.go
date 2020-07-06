@@ -3,15 +3,24 @@ package main
 import (
 	"encoding/json"
 	"github.com/gorilla/mux"
+	"github.com/rs/cors"
 	"log"
 	"net/http"
+	"strings"
 )
 
-const contentType = "application/json"
+const contentType string = "application/json"
 
 type TenantServer struct {
 	store TenantStore
 	http.Handler
+}
+
+func jsonMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", contentType)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func NewTenantServer(store TenantStore) *TenantServer {
@@ -22,8 +31,16 @@ func NewTenantServer(store TenantStore) *TenantServer {
 	router.HandleFunc("/", server.getHandler).Methods("GET")
 	router.HandleFunc("/", server.postHandler).Methods("POST")
 
-	server.Handler = router
 	server.store = store
+
+	c := cors.New(cors.Options{
+		AllowedOrigins:   []string{"http://localhost:3000"},
+		AllowedMethods:   []string{http.MethodGet, http.MethodPost},
+		AllowCredentials: true,
+	})
+
+	router.Use(jsonMiddleware)
+	server.Handler = c.Handler(router)
 
 	return server
 }
@@ -37,7 +54,7 @@ func (t *TenantServer) getHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("content-type", contentType)
+	w.Header().Set("Content-Type", contentType)
 
 	userId := userParams[0]
 
@@ -54,7 +71,6 @@ func (t *TenantServer) getHandler(w http.ResponseWriter, r *http.Request) {
 		log.Print("[500]: Error while trying to encode tenants slice to json.")
 		return
 	}
-	w.WriteHeader(http.StatusOK)
 	return
 }
 
@@ -102,5 +118,8 @@ func (t *TenantServer) postHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func requestHasNoBodyOrBodyIsNotJson(r *http.Request) bool {
-	return r.Body == http.NoBody || r.Body == nil || r.Header.Get("content-type") != contentType
+	bodyIsEmpty := r.Body == http.NoBody || r.Body == nil
+	contentTypeHeader := r.Header.Get("Content-Type")
+	headerIsNotJson := !strings.Contains(contentTypeHeader, contentType)
+	return bodyIsEmpty || headerIsNotJson
 }

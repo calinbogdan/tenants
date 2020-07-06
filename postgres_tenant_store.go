@@ -10,9 +10,7 @@ const getTenantsQuery = `SELECT Id, database_id FROM tenant
 	INNER JOIN tenant_member tm on tenant.Id = tm.tenant_id 
 	WHERE tm.user_id = $1`
 
-const insertTenants = `INSERT INTO tenant (database_id) VALUES ($1) RETURNING *`
-
-const insertTenantMember = `INSERT INTO tenant_member (tenant_id, user_id) VALUES ($1, $2)`
+const insertTenants = `SELECT * FROM insert_tenant($1, $2)`
 
 const createDatabase = `CREATE DATABASE "%s" WITH TEMPLATE template_tenantdb`
 
@@ -30,7 +28,7 @@ func NewPostgresTenantStore(tenantsUrl, tenantsServerUrl string) *PostgresTenant
 	return store
 }
 
-func (p *PostgresTenantStore) GetTenantsForUser(userId string) (tenants []Tenant, err error) {
+func (p *PostgresTenantStore) GetTenantsForUser(userId string) ([]Tenant, error) {
 	connection, err := p.initTenantsConnection()
 	if err != nil {
 		return nil, err
@@ -41,6 +39,8 @@ func (p *PostgresTenantStore) GetTenantsForUser(userId string) (tenants []Tenant
 	if err != nil {
 		return nil, err
 	}
+
+	tenants := make([]Tenant, 0)
 
 	for rows.Next() {
 		var tenant Tenant
@@ -78,16 +78,9 @@ func (p *PostgresTenantStore) CreateTenant(tenantId string, userId string) (*Ten
 
 	// insert in tenant
 	newTenant := new(Tenant)
-	err = createTenantTransaction.QueryRow(insertTenants, tenantId).Scan(&newTenant.Id, &newTenant.DatabaseId)
+	err = createTenantTransaction.QueryRow(insertTenants, tenantId, userId).Scan(&newTenant.Id, &newTenant.DatabaseId)
 	if err != nil {
 		log.Fatalf("Insert tenant ERROR: %s", err.Error())
-		return nil, err
-	}
-
-	// insert in tenant_member
-	_, err = createTenantTransaction.Exec(insertTenantMember, newTenant.Id, userId)
-	if err != nil {
-		log.Fatalf("Insert team member ERROR: %s", err.Error())
 		return nil, err
 	}
 
